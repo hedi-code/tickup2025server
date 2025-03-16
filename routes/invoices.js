@@ -1,8 +1,11 @@
 // Importation des modules nécessaires
 const express = require("express");
+const nodemailer = require("nodemailer");
 const Invoice = require("../models/Invoice"); // Modèle Invoice pour gérer les factures
 const Purchase = require("../models/Purchase"); // Modèle Purchase pour gérer les achats
 const authMiddleware = require("../middleware/authMiddleware"); // Middleware pour l'authentification
+const cron = require("node-cron");
+
 
 // Création d'un routeur pour les routes liées aux factures
 const router = express.Router();
@@ -89,6 +92,46 @@ router.delete("/:id", authMiddleware, async (req, res) => {
   // Suppression de la facture et de ses achats associés
   await Invoice.destroy({ where: { id: req.params.id, userId: req.user.id } });
   res.json({ message: "Invoice deleted" }); // Renvoie un message de confirmation
+});
+// Planification de l'envoi automatique des factures à la fin de chaque mois
+cron.schedule("0 0 1 * *", async () => {
+  try {
+    const invoices = await Invoice.findAll({ include: [Purchase] });
+    const accountant = await User.findOne({ where: { role: "accountant" } });
+
+    if (!accountant) {
+      console.error("No accountant found");
+      return;
+    }
+
+    let emailBody = `<h2>Invoices Report</h2>`;
+    invoices.forEach((invoice) => {
+      emailBody += `<h3>Invoice #${invoice.id} - Date: ${invoice.date} - Total: ${invoice.totalPrice}</h3><ul>`;
+      invoice.Purchases.forEach((purchase) => {
+        emailBody += `<li>${purchase.label}: ${purchase.quantity} × ${purchase.singlePrice} = ${purchase.quantity * purchase.singlePrice}</li>`;
+      });
+      emailBody += `</ul>`;
+    });
+
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS,
+      },
+    });
+
+    await transporter.sendMail({
+      from: process.env.EMAIL_USER,
+      to: accountant.email,
+      subject: "Monthly Invoice Report",
+      html: emailBody,
+    });
+
+    console.log("Invoices emailed to accountant");
+  } catch (error) {
+    console.error("Error sending invoices:", error.message);
+  }
 });
 
 // Exportation du routeur pour l'utiliser dans l'application Express
